@@ -12,16 +12,17 @@ import pytest
 
 
 _RESOURCES = Path(__file__).resolve().parents[1] / "resources" / "1vme"
-_REAL_CCP4 = _RESOURCES / "1vme_final_carved_edited_0.5occA_0.5occB_1.80A.ccp4"
-_REAL_CIF = _RESOURCES / "1vme_final_carved_edited_0.5occA_0.5occB.cif"
+_REAL_CCP4_HALF = _RESOURCES / "1VME_0.5occA_0.5occB_1.00A.ccp4"
+_REAL_CCP4_QUARTER = _RESOURCES / "1VME_0.25occA_0.75occB_1.00A.ccp4"
+_REAL_CIF = _RESOURCES / "1VME_single_001_density_input.cif"
+_REAL_RESOLUTION = 1.0
 
 # Occupancy pairs used to produce distinct `(protein, occ_key)` groups.
-# Each group reuses the same real CCP4/CIF via symlinks under different
-# filenames to exercise the plumbing without multiple maps
-_GROUP_OCCUPANCIES: tuple[tuple[float, float], ...] = (
-    (0.5, 0.5),
-    (0.4, 0.6),
+_GROUP_CCP4: tuple[tuple[tuple[float, float], Path], ...] = (
+    ((0.5, 0.5), _REAL_CCP4_HALF),
+    ((0.25, 0.75), _REAL_CCP4_QUARTER),
 )
+_GROUP_OCCUPANCIES: tuple[tuple[float, float], ...] = tuple(occ for occ, _ in _GROUP_CCP4)
 
 DEFAULT_SELECTIONS: tuple[str, ...] = (
     "chain A and resi 326-339",
@@ -83,21 +84,22 @@ def _populate(
     trials_per_group: int,
     selections: Sequence[str],
 ) -> RsccFixture:
-    assert _REAL_CCP4.exists(), _REAL_CCP4
     assert _REAL_CIF.exists(), _REAL_CIF
-    assert 1 <= n_groups <= len(_GROUP_OCCUPANCIES)
+    assert 1 <= n_groups <= len(_GROUP_CCP4)
     assert trials_per_group >= 1
     assert len(selections) >= 1
 
-    groups = _GROUP_OCCUPANCIES[:n_groups]
+    group_entries = _GROUP_CCP4[:n_groups]
+    groups = tuple(occ for occ, _ in group_entries)
 
     inputs = root / "inputs"
     base_map_dir_rel = Path("1vme_fixture_dir")
     base_map_dir = inputs / base_map_dir_rel
 
-    for a, b in groups:
+    for (a, b), real_ccp4 in group_entries:
+        assert real_ccp4.exists(), real_ccp4
         s = _occ_str(a, b)
-        _link(_REAL_CCP4, base_map_dir / f"{s}.ccp4")
+        _link(real_ccp4, base_map_dir / f"{s}.ccp4")
         _link(_REAL_CIF, base_map_dir / f"{s}.cif")
     # Default ``occ_list`` in get_reference_structure_coords looks these up.
     for s in ("1.0occA", "1.0occB"):
@@ -107,7 +109,7 @@ def _populate(
     configs_csv.parent.mkdir(parents=True, exist_ok=True)
     configs_csv.write_text(
         "protein,base_map_dir,selection,resolution,map_pattern,structure_pattern\n"
-        f"1vme,{base_map_dir_rel},{';'.join(selections)},1.8,"
+        f"1vme,{base_map_dir_rel},{';'.join(selections)},{_REAL_RESOLUTION},"
         "{occ_str}.ccp4,{occ_str}.cif\n"
     )
 

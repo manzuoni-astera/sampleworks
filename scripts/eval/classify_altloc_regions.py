@@ -47,7 +47,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from biotite.structure import AtomArray
+from biotite.structure import AtomArray, AtomArrayStack
 from loguru import logger
 from sampleworks.eval.grid_search_eval_utils import resolve_cif_path
 from sampleworks.eval.structure_utils import (
@@ -111,8 +111,8 @@ def _chain_from_selection(selection: str) -> str | None:
 
 
 def _mean_residue_lddt_for_pair(
-    gt_array: AtomArray,
-    pred_array: AtomArray,
+    gt_array: AtomArrayStack | AtomArray | None,
+    pred_array: AtomArrayStack | AtomArray | None,
     chain: str,
     residues: list[int],
 ) -> float:
@@ -148,7 +148,7 @@ def _mean_residue_lddt_for_pair(
 
 def _classify_selection(
     atom_array: AtomArray,
-    pair_arrays: dict[tuple[str, str], tuple[AtomArray, AtomArray]],
+    pair_arrays: dict[tuple[str, str], tuple[AtomArrayStack, AtomArrayStack]],
     altloc_ids: list[str],
     selection_str: str,
     protein: str,
@@ -334,8 +334,8 @@ def _process_structure(
         )
         if out is None:
             continue
-        row, covered = out
-        rows.append(row)
+        classified_row, covered = out
+        rows.append(classified_row)
         classified_res_ids.update(covered)
 
     # residues across all classified spans should equal total unique
@@ -378,7 +378,7 @@ def main(args: argparse.Namespace) -> None:
             )
         )
 
-    out_df = pd.DataFrame(all_rows, columns=OUTPUT_COLUMNS)
+    out_df = pd.DataFrame(all_rows, columns=pd.Index(OUTPUT_COLUMNS))
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
     out_df.to_csv(args.output_file, index=False)
     logger.info(f"Wrote {len(out_df)} classified spans to {args.output_file}")

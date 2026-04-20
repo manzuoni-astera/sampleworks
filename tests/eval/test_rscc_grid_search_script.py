@@ -211,16 +211,15 @@ def test_trials_grouped_by_sort_order(rscc_fixture_factory, rscc_script):
 
 
 @pytest.mark.slow
-def test_cached_base_map_array_unchanged_across_trials(
-    rscc_fixture_factory, rscc_script, monkeypatch
-):
-    """``base_xmap.array`` in the cache must not be mutated across trials.
+def test_cached_base_map_unchanged_across_trials(rscc_fixture_factory, rscc_script, monkeypatch):
+    """The shared cached ``base_xmap`` must not be mutated across trials.
 
     The script relies on ``copy.copy(base_xmap)`` producing a wrapper whose
-    ``.array`` rebind doesn't touch the cached original. The cache eviction
-    counter does not catch mutation of a retained cached map. This test
-    does, by snapshotting ``.array`` after the first build and comparing
-    after ``main()`` finishes.
+    ``.array`` rebind doesn't touch the cached original. Snapshot both the
+    ``.array`` data and the metadata attributes the shallow copy shares by
+    reference (``origin``, ``resolution``, ``unit_cell``, ``grid_parameters``)
+    so that drift in *any* of them across trials is caught, not just inplace
+    mutation of ``.array``.
     """
     fx = rscc_fixture_factory(n_groups=1, trials_per_group=2)
 
@@ -231,6 +230,10 @@ def test_cached_base_map_array_unchanged_across_trials(
         if "xmap" not in snapshot:
             snapshot["xmap"] = base_xmap
             snapshot["initial_array"] = base_xmap.array.copy()
+            snapshot["initial_origin"] = np.asarray(base_xmap.origin).copy()
+            snapshot["initial_resolution"] = base_xmap.resolution
+            snapshot["initial_unit_cell"] = base_xmap.unit_cell
+            snapshot["initial_grid_parameters"] = base_xmap.grid_parameters
         return real_build(base_xmap, *args, **kwargs)
 
     monkeypatch.setattr(rscc_script, "build_density_transformer", capturing_build)
@@ -238,7 +241,18 @@ def test_cached_base_map_array_unchanged_across_trials(
     rscc_script.main(_make_args(fx))
 
     xmap = snapshot["xmap"]
-    initial = snapshot["initial_array"]
-    assert np.array_equal(xmap.array, initial), (  # type: ignore[attr-defined]
+    assert np.array_equal(xmap.array, snapshot["initial_array"]), (  # type: ignore[attr-defined]
         "cached base_xmap.array was mutated across trials"
+    )
+    assert np.array_equal(  # type: ignore[attr-defined]
+        np.asarray(xmap.origin), snapshot["initial_origin"]
+    ), "cached base_xmap.origin drifted across trials"
+    assert xmap.resolution is snapshot["initial_resolution"], (  # type: ignore[attr-defined]
+        "cached base_xmap.resolution reference replaced"
+    )
+    assert xmap.unit_cell is snapshot["initial_unit_cell"], (  # type: ignore[attr-defined]
+        "cached base_xmap.unit_cell reference replaced"
+    )
+    assert xmap.grid_parameters is snapshot["initial_grid_parameters"], (  # type: ignore[attr-defined]
+        "cached base_xmap.grid_parameters reference replaced"
     )

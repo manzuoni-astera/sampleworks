@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from biotite.structure import get_residues, rmsd as biotite_rmsd
+from biotite.structure import AtomArrayStack, get_residues, rmsd as biotite_rmsd
 from loguru import logger
 from sampleworks.eval.grid_search_eval_utils import resolve_cif_path
 from sampleworks.eval.structure_utils import (
@@ -43,7 +43,7 @@ def _has_compositional_heterogeneity(arr_i, arr_j, mask: np.ndarray) -> bool:
 
 
 def _find_max_rmsd_window(
-    pair_arrays: dict[tuple[str, str], tuple[object, object]],
+    pair_arrays: dict[tuple[str, str], tuple[AtomArrayStack, AtomArrayStack]],
     chain: str,
     residues: list[int],
     window_size: int = 3,
@@ -67,9 +67,9 @@ def _find_max_rmsd_window(
         ``(best_window_residues, best_rmsd, best_pair_str)`` or ``None``
         if no valid RMSD could be computed for any window.
     """
-    best_rmsd = -np.inf
-    best_window: list[int] | None = None
-    best_pair = ""
+    max_rmsd = -np.inf
+    max_window: list[int] | None = None
+    max_pair = ""
 
     for w in range(len(residues) - window_size + 1):
         window_res = residues[w : w + window_size]
@@ -86,14 +86,14 @@ def _find_max_rmsd_window(
                 continue
 
             rmsd_val = float(biotite_rmsd(arr_i[mask], arr_j[mask]))
-            if np.isfinite(rmsd_val) and rmsd_val > best_rmsd:
-                best_rmsd = rmsd_val
-                best_window = window_res
-                best_pair = f"{alt_i}-{alt_j}"
+            if np.isfinite(rmsd_val) and rmsd_val > max_rmsd:
+                max_rmsd = rmsd_val
+                max_window = window_res
+                max_pair = f"{alt_i}-{alt_j}"
 
-    if best_window is None:
+    if max_window is None:
         return None
-    return best_window, float(best_rmsd), best_pair
+    return max_window, float(max_rmsd), max_pair
 
 
 def _process_structure(
@@ -172,10 +172,10 @@ def _process_structure(
                 out["max_rmsd"] = float("nan")
                 out["altloc_pair"] = ""
             else:
-                best_res, best_rmsd, best_pair = result
-                out["selection"] = f"chain {chain} and resi {best_res[0]}-{best_res[-1]}"
-                out["max_rmsd"] = best_rmsd
-                out["altloc_pair"] = best_pair
+                max_res, max_rmsd, max_pair = result
+                out["selection"] = f"chain {chain} and resi {max_res[0]}-{max_res[-1]}"
+                out["max_rmsd"] = max_rmsd
+                out["altloc_pair"] = max_pair
 
         output_rows.append(out)
 
@@ -205,14 +205,16 @@ def main(args: argparse.Namespace) -> None:
 
     if detail_df.empty:
         final_df = pd.DataFrame(
-            columns=[
-                "protein",
-                "selection",
-                "structure_pattern",
-                "map_pattern",
-                "base_map_dir",
-                "resolution",
-            ]
+            columns=pd.Index(
+                [
+                    "protein",
+                    "selection",
+                    "structure_pattern",
+                    "map_pattern",
+                    "base_map_dir",
+                    "resolution",
+                ]
+            )
         )
     else:
         final_rows = []
