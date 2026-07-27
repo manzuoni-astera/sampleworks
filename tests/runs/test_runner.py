@@ -259,6 +259,76 @@ def test_prebuilt_env_required_rejects_runtime_pixi(
         runner.build_invocations(preset, results_dir=Path("/r"))
 
 
+def _make_pixi_project(root: Path, marker: str) -> None:
+    """Create a minimal pixi project directory with tagged manifest files.
+
+    Parameters
+    ----------
+    root : Path
+        Directory to populate; created if missing.
+    marker : str
+        Text written into ``pyproject.toml``/``pixi.lock`` so two projects can
+        be made byte-identical or byte-different.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text(f"# {marker}\n")
+    (root / "pixi.lock").write_text(f"# {marker}\n")
+
+
+def test_runtime_pixi_prefers_synced_checkout_over_stale_project_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RUNTIME_PIXI resolves envs against the synced checkout, not a stale /app.
+
+    The ACTL launcher baked into /usr/local/bin is a frozen copy that can export
+    a stale SAMPLEWORKS_PIXI_PROJECT_DIR=/app. When the synced checkout's pixi
+    manifest differs from the baked image (e.g. it adds a new env), the runner
+    must build job argv against the checkout that actually defines the env.
+    """
+    image = tmp_path / "app"
+    workspace = tmp_path / "workspace"
+    _make_pixi_project(image, "image")
+    _make_pixi_project(workspace, "workspace-with-protpardelle")
+    env_python = workspace / ".pixi" / "envs" / "protpardelle" / "bin" / "python"
+    env_python.parent.mkdir(parents=True)
+    env_python.write_text("#!/bin/sh\n")
+    env_python.chmod(0o755)
+
+    monkeypatch.setattr(runner, "IMAGE_PIXI_PROJECT_DIR", image)
+    monkeypatch.setattr(runner, "WORKSPACE_DIR", workspace)
+    monkeypatch.setenv("RUNTIME_PIXI", "1")
+    monkeypatch.setenv("SAMPLEWORKS_PIXI_PROJECT_DIR", str(image))
+    monkeypatch.delenv("SAMPLEWORKS_SOURCE_DIR", raising=False)
+    monkeypatch.delenv("SAMPLEWORKS_FORCE_PIXI", raising=False)
+
+    assert runner._pixi_project_dir() == workspace
+    argv = runner._build_argv("protpardelle", {}, script="run_grid_search.py")
+    assert argv[0] == str(env_python)
+    assert "pixi" not in argv
+
+
+def test_runtime_pixi_keeps_image_when_manifests_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RUNTIME_PIXI does not divert to the checkout when manifests are identical.
+
+    A byte-identical checkout carries no new envs, so the baked image (with its
+    prepared environments) stays authoritative.
+    """
+    image = tmp_path / "app"
+    workspace = tmp_path / "workspace"
+    _make_pixi_project(image, "same")
+    _make_pixi_project(workspace, "same")
+
+    monkeypatch.setattr(runner, "IMAGE_PIXI_PROJECT_DIR", image)
+    monkeypatch.setattr(runner, "WORKSPACE_DIR", workspace)
+    monkeypatch.setenv("RUNTIME_PIXI", "1")
+    monkeypatch.setenv("SAMPLEWORKS_PIXI_PROJECT_DIR", str(image))
+    monkeypatch.delenv("SAMPLEWORKS_SOURCE_DIR", raising=False)
+
+    assert runner._pixi_project_dir() == image
+
+
 def test_dry_run_does_not_create_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import filecmp
 import os
 import shlex
 import subprocess
@@ -17,6 +18,10 @@ from .schema import Job, Preset
 
 DEFAULT_GRID_SEARCH_SCRIPT = "/app/run_grid_search.py"
 WORKSPACE_GRID_SEARCH_SCRIPT = "/home/dev/workspace/run_grid_search.py"
+# Baked pixi/checkpoint image project dir and the ACTL-synced checkout location.
+# Module constants so tests can point them at temporary directories.
+IMAGE_PIXI_PROJECT_DIR = Path("/app")
+WORKSPACE_DIR = Path("/home/dev/workspace")
 DISABLE_GPU_ASSIGNMENTS = frozenset({"none", "void", "nodevfiles"})
 PROCESS_SHUTDOWN_TIMEOUT_SECONDS = 10
 TEE_THREAD_JOIN_TIMEOUT_SECONDS = 5
@@ -517,21 +522,94 @@ def _job_env(pixi_env: str, env: dict[str, str]) -> dict[str, str]:
     return activated
 
 
+def _synced_checkout_dir() -> Path | None:
+    """Return the ACTL-synced checkout when it differs from the baked image.
+
+    The ACTL launcher baked into ``/usr/local/bin`` is a frozen copy that does
+    not sync with the user's workspace, so under ``RUNTIME_PIXI`` it can export a
+    stale ``SAMPLEWORKS_PIXI_PROJECT_DIR=/app``. Re-resolving the live checkout
+    here — from the same signals the wrapper uses (``SAMPLEWORKS_SOURCE_DIR``,
+    the ``/home/dev/workspace`` convention, then the working directory the
+    wrapper ``cd``s into) — lets the runner honor the escape hatch even when the
+    launcher is stale.
+
+    Returns
+    -------
+    Path or None
+        A Sampleworks checkout distinct from the baked image, or ``None`` when
+        none can be found.
+    """
+    image = IMAGE_PIXI_PROJECT_DIR.resolve()
+    candidates: list[Path] = []
+    source_env = os.environ.get("SAMPLEWORKS_SOURCE_DIR")
+    if source_env:
+        candidates.append(Path(source_env))
+    candidates.append(WORKSPACE_DIR)
+    candidates.append(Path.cwd())
+    for candidate in candidates:
+        if (candidate / "pyproject.toml").is_file() and candidate.resolve() != image:
+            return candidate
+    return None
+
+
+def _pixi_inputs_match_image(image_root: Path, source_root: Path) -> bool:
+    """Return True when a checkout's pixi manifest matches the baked image.
+
+    Mirrors ``pixi_inputs_match_image`` in the ACTL wrappers: the synced
+    checkout is only authoritative when its ``pyproject.toml`` or ``pixi.lock``
+    differs from the baked image. When either side lacks the metadata to
+    compare, we conservatively report a match (as the wrappers do), leaving the
+    baked image as the default.
+
+    Parameters
+    ----------
+    image_root : Path
+        Baked image project directory.
+    source_root : Path
+        Synced checkout directory.
+
+    Returns
+    -------
+    bool
+        True when both manifests are present on each side and byte-identical, or
+        when comparison metadata is missing.
+    """
+    for name in ("pyproject.toml", "pixi.lock"):
+        if not (image_root / name).is_file() or not (source_root / name).is_file():
+            return True
+    return filecmp.cmp(
+        image_root / "pyproject.toml", source_root / "pyproject.toml", shallow=False
+    ) and filecmp.cmp(image_root / "pixi.lock", source_root / "pixi.lock", shallow=False)
+
+
 def _pixi_project_dir() -> Path:
     """Return the pixi project directory for env lookup and fallback pixi runs.
+
+    Under the ``RUNTIME_PIXI`` escape hatch, a synced checkout whose pixi
+    manifest differs from the baked image is authoritative and is returned even
+    when ``SAMPLEWORKS_PIXI_PROJECT_DIR`` points at the baked ``/app``. This is
+    re-derived here rather than trusted from the wrapper because the ACTL
+    launcher baked into ``/usr/local/bin`` is a frozen copy that never syncs
+    with the workspace, so it can export a stale project dir. Otherwise the
+    explicit override wins, then the baked image, then the current directory.
 
     Returns
     -------
     Path
-        Project directory, defaulting to ``/app`` for the ACTL pixi/checkpoint
-        image or the current working directory outside that image.
+        Project directory to use for pixi env resolution and job launch.
     """
+    if _truthy_env("RUNTIME_PIXI") or _truthy_env("SAMPLEWORKS_ALLOW_RUNTIME_PIXI"):
+        source = _synced_checkout_dir()
+        if source is not None and not _pixi_inputs_match_image(
+            IMAGE_PIXI_PROJECT_DIR, source
+        ):
+            return source
+
     override = os.environ.get("SAMPLEWORKS_PIXI_PROJECT_DIR")
     if override:
         return Path(override)
-    app = Path("/app")
-    if (app / "pyproject.toml").exists():
-        return app
+    if (IMAGE_PIXI_PROJECT_DIR / "pyproject.toml").exists():
+        return IMAGE_PIXI_PROJECT_DIR
     return Path.cwd()
 
 
