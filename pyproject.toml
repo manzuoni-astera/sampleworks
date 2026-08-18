@@ -19,8 +19,28 @@ analysis = [
 dev = ["pytest", "pytest-cov", "mypy", "prek", "ty==0.0.39", "ruff", "pytest-loguru", "python-semantic-release"]
 test = ["pytest", "pytest-cov", "pytest-loguru"]
 
+# lunus.sf supplies the differentiable structure factors and diffuse scattering
+# the guidance target is built on. It is declared HERE, on a linux-only feature,
+# rather than workspace-level, and that is load-bearing rather than tidiness.
+#
+# lunus is a git SOURCE dependency with no published wheel, so pixi must BUILD it
+# to read its metadata -- for every platform an environment declares. No single
+# machine can build both, so a workspace-level declaration is unlockable
+# anywhere: macOS fails solving linux-64, and the Linux runner fails solving
+# osx-arm64 for boltz-osx. Confining it to linux-only features means no
+# osx-arm64 environment references it, and the lock can be produced on Linux.
+#
+# The durable fix is a published wheel: lunus.sf is pure Python, so one
+# py3-none-any artifact needs no build anywhere and the constraint disappears,
+# at which point this can move back to workspace-level.
+#
+# Pinned to a rev, not the `sf` branch. A branch pin resolves to a SHA at lock
+# time and then never moves -- the manifest reads the same, `pixi lock` finds
+# nothing stale, and new lunus commits never arrive. fb22633 is the aniso
+# extraction; DiffuseBraggRewardFunction needs lunus.sf.IsotropicBackground,
+# which does not exist before b73e5c6.
 [tool.pixi.feature.boltz]
-pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "cuequivariance-ops-torch-cu12" = "*", "rdkit" = ">=2025.3.6"}
+pypi-dependencies = {"boltz" = "*", "cuequivariance-torch" = "*", "cuequivariance-ops-torch-cu12" = "*", "rdkit" = ">=2025.3.6", "lunus" = {rev = "fb22633f3279baf3e97f207d0bea4ce34733e6f8", extras = ["sf"], git = "https://github.com/lanl/lunus.git"}}
 platforms = ["linux-64"]
 
 [tool.pixi.feature.boltz-osx]
