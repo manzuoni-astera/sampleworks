@@ -7,6 +7,8 @@ name: Relock
 # branch) whenever pyproject.toml changes and the lock needs refreshing.
 on:
   workflow_dispatch:
+  push:
+    branches: ['relock-test-**']
 
 permissions:
   contents: write
@@ -45,5 +47,5 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add pixi.lock
             git commit -m "chore: relock pixi.lock on linux (pixi v0.73.0)"
-            git push origin HEAD:${{ github.ref_name }}
+            echo "(probe: not pushing)"
           fi
