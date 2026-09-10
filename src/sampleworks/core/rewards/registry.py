@@ -63,20 +63,17 @@ class RewardSpec:
         ``"module:function"`` address of the builder, resolved lazily.
     description
         One-line summary, shown in ``--help``.
-    data_path_option
-        Name of the option holding the experimental data file, if any. Lets
-        callers that resolve data per protein (grid search) inject it without
-        knowing which reward they are configuring.
-    resolution_option
-        Name of the option holding the resolution, if any. Same rationale.
+    required_options
+        Options the reward cannot be built without. Lets a configuration be
+        refused up front, before a model is loaded; the builder raises its own
+        error for the same inputs when it runs.
     """
 
     name: Rewards
     options_cls: type
     builder_path: str
     description: str
-    data_path_option: str | None = None
-    resolution_option: str | None = None
+    required_options: tuple[str, ...] = ()
 
     def builder(self) -> Callable[[Any, RewardBuildContext], RewardFunctionProtocol]:
         """Import and return this reward's builder function.
@@ -96,16 +93,14 @@ REWARD_SPECS: dict[Rewards, RewardSpec] = {
         options_cls=RealSpaceDensityOptions,
         builder_path="sampleworks.core.rewards.real_space_density:build_real_space_density_reward",
         description="Real-space density fit (X-ray or cryo-EM map).",
-        data_path_option="density",
-        resolution_option="resolution",
+        required_options=("density", "resolution"),
     ),
     Rewards.STRUCTURE_FACTOR: RewardSpec(
         name=Rewards.STRUCTURE_FACTOR,
         options_cls=StructureFactorOptions,
         builder_path="sampleworks.core.rewards.structure_factor:build_structure_factor_reward",
         description="Reciprocal-space structure-factor amplitude fit (MTZ target).",
-        data_path_option="mtzfile",
-        resolution_option="resolution",
+        required_options=("mtzfile",),
     ),
 }
 

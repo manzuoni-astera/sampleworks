@@ -16,12 +16,13 @@ options (issue #358)::
 Both ways of configuring a run produce this same structure: ``--reward-type``
 with per-option flags produces a single entry, and ``--reward-config FILE``
 produces one entry per reward in the file. Everything downstream -- building the
-rewards, serializing the run, injecting per-protein data in a grid search --
-works on :class:`RewardConfig` and does not care which surface produced it.
+rewards, serializing the run -- works on :class:`RewardConfig` and does not care
+which surface produced it.
 
-Weights are resolved at build time: omitting them all gives every reward ``1/N``,
-so a single-reward run is unweighted and a two-reward run is a plain average
-unless the user says otherwise.
+Weights are relative and resolved at build time, normalized to sum to 1: omitting
+them all gives every reward ``1/N``, ``{a: 2, b: 3}`` gives ``(0.4, 0.6)``, and a
+single reward always has weight 1. The overall strength of guidance is the
+scaler's step size, so the ratios written here are the only thing that matters.
 """
 
 from __future__ import annotations
@@ -66,9 +67,9 @@ class RewardEntry:
     reward
         The reward type.
     weight
-        Multiplier on this reward's value in the combined objective. ``None``
-        means "unspecified", resolved to ``1/N`` by
-        :meth:`RewardConfig.resolved_weights`.
+        Relative weight of this reward in the combined objective; only the ratios
+        between entries matter, see :meth:`RewardConfig.resolved_weights`.
+        ``None`` means "unspecified".
     options
         Option values for this reward. Options that are absent take the defaults
         declared in :mod:`sampleworks.core.rewards.options`.
@@ -280,9 +281,8 @@ class RewardConfig:
 
         A run's metadata should record what actually ran, not only what was typed:
         defaults change between versions, and an option that was defaulted is
-        otherwise indistinguishable from one that did not exist. Options left at
-        ``None`` stay absent, so they remain fillable by
-        :meth:`with_experimental_data`.
+        otherwise indistinguishable from one that did not exist. Options whose
+        value is ``None`` stay absent, so the mapping records only what is set.
 
         Returns
         -------
@@ -324,18 +324,23 @@ class RewardConfig:
         return missing
 
     def resolved_weights(self) -> tuple[float, ...]:
-        """Resolve the per-reward weights, filling in the uniform default.
+        """Resolve the per-reward weights, normalized to sum to 1.
+
+        Weights are relative: ``{a: 2, b: 3}`` and ``{a: 0.4, b: 0.6}`` are the
+        same configuration, and a single reward has weight 1 whatever was written.
+        The overall strength of guidance is the scaler's step size, not these.
 
         Returns
         -------
         tuple[float, ...]
-            One weight per entry, in order.
+            One weight per entry, in order, summing to 1.
 
         Raises
         ------
         ValueError
             If some but not all entries carry a weight -- the uniform default
-            would silently disagree with the weights that were given.
+            would silently disagree with the weights that were given -- or if
+            every given weight is zero.
         """
         weighted = [entry for entry in self.entries if entry.weight is not None]
         if not weighted:
@@ -348,51 +353,11 @@ class RewardConfig:
                 f"weight, or none of them (which weights each by 1/{len(self.entries)})."
             )
 
-        weights = tuple(float(entry.weight) for entry in self.entries)  # ty:ignore[invalid-argument-type]
+        weights = [float(entry.weight) for entry in self.entries]  # ty:ignore[invalid-argument-type]
         total = sum(weights)
-        if abs(total - 1.0) > 1e-6:
-            logger.warning(
-                f"Reward weights sum to {total:g}, not 1. Using them as given; scale them "
-                "yourself if you meant them to be relative."
-            )
-        return weights
-
-    def with_experimental_data(
-        self, *, path: str | Path | None = None, resolution: float | None = None
-    ) -> RewardConfig:
-        """Fill in per-run experimental data without knowing which reward is configured.
-
-        Grid search resolves a map or MTZ and a resolution per protein, long after
-        the reward type was chosen. Each reward declares which of its options hold
-        those (``data_path_option`` / ``resolution_option``), so they can be
-        injected generically. Options already set are left alone -- an explicit
-        value from the user or a config file wins.
-
-        Parameters
-        ----------
-        path
-            Experimental data file for this run (map or MTZ).
-        resolution
-            Resolution in Angstroms for this run.
-
-        Returns
-        -------
-        RewardConfig
-            A new configuration with the data filled in where it was missing.
-        """
-        entries = []
-        for entry in self.entries:
-            spec = get_reward_spec(entry.reward)
-            options = dict(entry.options)
-            for option_name, value in (
-                (spec.data_path_option, None if path is None else str(path)),
-                (spec.resolution_option, resolution),
-            ):
-                if option_name is not None and value is not None:
-                    options.setdefault(option_name, value)
-            entries.append(replace(entry, options=options))
-
-        return RewardConfig(tuple(entries))
+        if total <= 0:
+            raise ValueError("Reward weights are all zero; at least one must be positive.")
+        return tuple(weight / total for weight in weights)
 
     def remapped_paths(self, remap: Any) -> dict[str, Any]:
         """Return :meth:`to_mapping` with path-valued options passed through ``remap``.
@@ -424,10 +389,11 @@ class RewardConfig:
 def build_reward(config: RewardConfig, context: RewardBuildContext) -> RewardFunctionProtocol:
     """Build the reward function a run scores against.
 
-    One configured reward at full weight is built and returned directly, so the
-    single-reward runs that are today's norm keep exactly the values and gradients
-    they had before there was a registry. Anything else becomes a
-    :class:`~sampleworks.core.rewards.composite.CompositeReward`.
+    One configured reward is built and returned directly -- its normalized weight
+    is necessarily 1 -- so the single-reward runs that are today's norm keep
+    exactly the values and gradients they had before there was a registry. Several
+    rewards become a :class:`~sampleworks.core.rewards.composite.CompositeReward`
+    with their normalized weights.
 
     Parameters
     ----------
@@ -446,7 +412,7 @@ def build_reward(config: RewardConfig, context: RewardBuildContext) -> RewardFun
         build_single_reward(entry.reward, entry.options, context) for entry in config.entries
     ]
 
-    if len(rewards) == 1 and weights[0] == 1.0:
+    if len(rewards) == 1:
         return rewards[0]
 
     from sampleworks.core.rewards.composite import CompositeReward

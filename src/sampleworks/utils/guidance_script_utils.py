@@ -17,10 +17,7 @@ from biotite.structure.io import save_structure
 from loguru import logger
 
 from sampleworks.core.rewards.options import RealSpaceDensityOptions
-from sampleworks.core.rewards.real_space_density import (
-    build_real_space_density_reward,
-    RealSpaceRewardFunction,
-)
+from sampleworks.core.rewards.real_space_density import build_real_space_density_reward
 from sampleworks.core.rewards.registry import RewardBuildContext
 from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
 from sampleworks.core.scalers.fk_steering import FKSteering
@@ -300,33 +297,6 @@ def load_guidance_structure(structure_path: str | Path) -> dict[str, Any]:
     return structure
 
 
-def get_reward_function_and_structure(
-    density: str | Path,
-    device: torch.device,
-    em,
-    loss_order,
-    resolution,
-    structure_path: str | Path,
-) -> tuple[RealSpaceRewardFunction, dict[str, Any]]:
-    """Load structure and density inputs and build the real-space reward function.
-
-    .. deprecated::
-        Build rewards through
-        :func:`sampleworks.core.rewards.registry.build_single_reward` (or
-        :func:`build_reward` for a whole run configuration) instead. Kept for
-        callers that still construct the density reward positionally.
-    """
-    structure = load_guidance_structure(structure_path)
-    logger.info("Creating reward function")
-    reward_function = build_real_space_density_reward(
-        RealSpaceDensityOptions(
-            density=str(density), resolution=resolution, loss_order=loss_order, em=em
-        ),
-        RewardBuildContext(structure=structure, device=device),
-    )
-    return reward_function, structure
-
-
 def save_everything(
     args: GuidanceConfig,
     losses: list[Any],
@@ -490,13 +460,17 @@ def _three_state_resolver(value: str | bool | None, default: bool) -> bool:
 # "guidance_type" is also called "scaler" in many places
 def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, device):
     """Run one configured guidance trajectory and save its outputs."""
-    reward_function, structure = get_reward_function_and_structure(
-        args.density,  # str/path to a map file.
-        device,  # this needs to come from the global context, not the args object.
-        args.em,
-        args.loss_order,
-        args.resolution,
-        args.structure,  # path/string to a structure file.
+    structure = load_guidance_structure(args.structure)
+    logger.info("Creating reward function")
+    reward_function = build_real_space_density_reward(
+        RealSpaceDensityOptions(
+            density=str(args.density),
+            resolution=args.resolution,
+            loss_order=args.loss_order,
+            em=args.em,
+        ),
+        # device comes from the global context, not the args object.
+        RewardBuildContext(structure=structure, device=device),
     )
 
     # Determine model type from wrapper class name

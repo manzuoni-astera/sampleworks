@@ -30,14 +30,12 @@ class TestRegistryEntries:
     def test_spec_is_keyed_by_its_own_name(self, reward: Rewards):
         assert REWARD_SPECS[reward].name is reward
 
-    def test_declared_data_and_resolution_options_exist(self, reward: Rewards):
-        """The grid-search injection points must name real options."""
+    def test_required_options_are_real_options(self, reward: Rewards):
+        """A required option that is not in the schema could never be satisfied."""
         spec = REWARD_SPECS[reward]
         option_names = {f.name for f in dataclasses.fields(spec.options_cls)}
 
-        for declared in (spec.data_path_option, spec.resolution_option):
-            if declared is not None:
-                assert declared in option_names
+        assert set(spec.required_options) <= option_names
 
     def test_file_valued_options_are_declared_as_paths(self, reward: Rewards):
         """A path option that forgets ``path=True`` silently escapes path remapping."""
