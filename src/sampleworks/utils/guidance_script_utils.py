@@ -18,7 +18,6 @@ from loguru import logger
 
 from sampleworks.core.rewards.options import RealSpaceDensityOptions
 from sampleworks.core.rewards.real_space_density import build_real_space_density_reward
-from sampleworks.core.rewards.registry import RewardBuildContext
 from sampleworks.core.samplers.edm import AF3EDMSampler, EDMSamplerConfig
 from sampleworks.core.scalers.fk_steering import FKSteering
 from sampleworks.core.scalers.pure_guidance import PureGuidance
@@ -265,9 +264,10 @@ def get_model_and_device(
 def load_guidance_structure(structure_path: str | Path) -> dict[str, Any]:
     """Parse the input structure for a guidance run.
 
-    Reward-agnostic: every reward in a run scores the same structure, so it is
-    loaded once here and handed to the reward builders through
-    :class:`~sampleworks.core.rewards.registry.RewardBuildContext`.
+    Reward-agnostic: the structure is what the run samples around, and the
+    scalers derive every reward's inputs from it. Rewards themselves do not see
+    it at build time; the ones that need the model topology bind to it in
+    ``prepare``.
 
     Parameters
     ----------
@@ -470,7 +470,7 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
             em=args.em,
         ),
         # device comes from the global context, not the args object.
-        RewardBuildContext(structure=structure, device=device),
+        device=device,
     )
 
     # Determine model type from wrapper class name

@@ -237,7 +237,7 @@ class TestSerialization:
             Rewards.STRUCTURE_FACTOR, mtzfile="/data/x.mtz", resolution=2.0
         )
 
-        mapping = config.remapped_paths(lambda p: p.replace("/data", "/host"))
+        mapping = config.to_mapping(remap_path=lambda p: p.replace("/data", "/host"))
 
         options = mapping["structure_factor"]["reward_options"]
         assert options["mtzfile"] == "/host/x.mtz"

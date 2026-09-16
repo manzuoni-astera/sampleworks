@@ -12,7 +12,6 @@ import torch
 from jaxtyping import Bool, Complex, Float, Int
 from loguru import logger
 from sampleworks.core.rewards.options import StructureFactorOptions
-from sampleworks.core.rewards.registry import RewardBuildContext
 from sampleworks.synthetic.synthetic_utils import atomarray_to_gemmi, resolve_mtz_column
 from SFC_Torch import SFcalculator
 from SFC_Torch.io import PDBParser
@@ -637,23 +636,23 @@ class StructureFactorRewardFunction:
 
 
 def build_structure_factor_reward(
-    options: StructureFactorOptions, context: RewardBuildContext
+    options: StructureFactorOptions, *, device: torch.device | str = "cpu"
 ) -> StructureFactorRewardFunction:
     """Build the structure-factor reward from its configured options.
 
     The returned reward is not yet usable: like every two-phase reward it binds to
     the model topology in :meth:`StructureFactorRewardFunction.prepare`, which the
-    trajectory scaler calls once sampling knows the model atom array. ``context``
-    is therefore unused -- neither the input structure nor the device is settled at
-    build time.
+    trajectory scaler calls once sampling knows the model atom array and passes
+    the device again. ``device`` is therefore unused here; every builder takes it
+    so the registry can call them alike.
 
     Parameters
     ----------
     options
         Structure-factor reward options; see
         :class:`~sampleworks.core.rewards.options.StructureFactorOptions`.
-    context
-        Run-level inputs. Unused here, kept for a uniform builder signature.
+    device
+        Torch device the reward will run on. Unused until :meth:`prepare`.
 
     Returns
     -------
@@ -665,7 +664,7 @@ def build_structure_factor_reward(
     ValueError
         If no MTZ was given.
     """
-    del context  # topology and device arrive in prepare()
+    del device  # topology and device arrive in prepare()
 
     if options.mtzfile is None:
         raise ValueError(

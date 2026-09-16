@@ -32,23 +32,6 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class RewardBuildContext:
-    """Run-level inputs a reward builder may need that are not reward options.
-
-    Attributes
-    ----------
-    structure
-        Atomworks-parsed structure dictionary for the input structure, loaded once
-        by the caller and shared by every reward in a run.
-    device
-        Torch device the reward runs on.
-    """
-
-    structure: dict
-    device: torch.device | str = "cpu"
-
-
-@dataclass(frozen=True)
 class RewardSpec:
     """Everything the framework needs to know about a reward without importing it.
 
@@ -75,13 +58,15 @@ class RewardSpec:
     description: str
     required_options: tuple[str, ...] = ()
 
-    def builder(self) -> Callable[[Any, RewardBuildContext], RewardFunctionProtocol]:
+    def builder(self) -> Callable[..., RewardFunctionProtocol]:
         """Import and return this reward's builder function.
 
         Returns
         -------
         Callable
-            Builder taking ``(options, context)`` and returning a reward function.
+            Builder taking ``(options, *, device)`` and returning a reward function.
+            Anything a reward needs from the model topology arrives later, in
+            :meth:`~sampleworks.core.rewards.protocol.PreparableRewardFunctionProtocol.prepare`.
         """
         module_path, function_name = self.builder_path.split(":")
         return getattr(importlib.import_module(module_path), function_name)
@@ -176,7 +161,8 @@ def coerce_options(spec: RewardSpec, raw: Mapping[str, Any]) -> Any:
 def build_single_reward(
     reward: Rewards | str,
     options: Mapping[str, Any],
-    context: RewardBuildContext,
+    *,
+    device: torch.device | str = "cpu",
 ) -> RewardFunctionProtocol:
     """Build one reward from its option mapping.
 
@@ -186,8 +172,8 @@ def build_single_reward(
         Reward type to build.
     options
         Option values for that reward; missing options take their defaults.
-    context
-        Run-level inputs (parsed structure, device).
+    device
+        Torch device the reward runs on.
 
     Returns
     -------
@@ -195,4 +181,4 @@ def build_single_reward(
         The constructed reward function.
     """
     spec = get_reward_spec(reward)
-    return spec.builder()(coerce_options(spec, options), context)
+    return spec.builder()(coerce_options(spec, options), device=device)

@@ -30,7 +30,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -42,12 +42,12 @@ from sampleworks.core.rewards.registry import (
     coerce_options,
     get_reward_spec,
     reward_type_names,
-    RewardBuildContext,
 )
 from sampleworks.utils.guidance_constants import Rewards
 
 
 if TYPE_CHECKING:
+    import torch
     from sampleworks.core.rewards.protocol import RewardFunctionProtocol
 
 
@@ -99,6 +99,92 @@ class RewardEntry:
                 f"Weight for reward '{self.reward.value}' must be non-negative, got {self.weight}."
             )
         return self
+
+    @classmethod
+    def from_mapping(cls, reward: Rewards | str, entry: Mapping[str, Any] | None) -> RewardEntry:
+        """Parse one ``{weight, reward_options}`` entry of a configuration file.
+
+        A bare ``{}`` (or ``None``) means "this reward, all defaults". This checks
+        the entry's shape; whether its options fit the reward's schema is
+        :meth:`validated`, which :class:`RewardConfig` runs on every entry it holds.
+
+        Parameters
+        ----------
+        reward
+            The reward the entry configures, as a member or its name.
+        entry
+            The entry's value in the ``{reward: {...}}`` mapping.
+
+        Returns
+        -------
+        RewardEntry
+            The parsed entry.
+
+        Raises
+        ------
+        ValueError
+            If the reward is unknown, the entry or its ``reward_options`` is not
+            a mapping, or the entry holds keys other than ``weight`` and
+            ``reward_options``.
+        """
+        reward = get_reward_spec(reward).name
+        entry = _as_mapping(
+            {} if entry is None else entry,
+            f"Configuration for reward '{reward.value}'",
+            f"with '{WEIGHT_KEY}' and/or '{REWARD_OPTIONS_KEY}' keys",
+        )
+
+        unexpected = sorted(set(entry) - {WEIGHT_KEY, REWARD_OPTIONS_KEY})
+        if unexpected:
+            raise ValueError(
+                f"Unexpected key(s) {unexpected} in the configuration for reward "
+                f"'{reward.value}'. Reward options belong under '{REWARD_OPTIONS_KEY}'."
+            )
+
+        options = _as_mapping(
+            entry.get(REWARD_OPTIONS_KEY) or {},
+            f"'{REWARD_OPTIONS_KEY}' for reward '{reward.value}'",
+            "of option name to value",
+        )
+        weight = entry.get(WEIGHT_KEY)
+        return cls(
+            reward=reward,
+            weight=None if weight is None else float(weight),
+            options=dict(options),
+        )
+
+    def to_mapping(self, remap_path: Callable[[str], str] | None = None) -> dict[str, Any]:
+        """Return this entry as the ``{weight, reward_options}`` mapping it came from.
+
+        Parameters
+        ----------
+        remap_path
+            If given, every path-valued option is passed through it; see
+            :meth:`RewardConfig.to_mapping`.
+
+        Returns
+        -------
+        dict[str, Any]
+            The entry, without keys for an unset weight or empty options.
+        """
+        payload: dict[str, Any] = {}
+        if self.weight is not None:
+            payload[WEIGHT_KEY] = self.weight
+        if self.options:
+            options = dict(self.options)
+            if remap_path is not None:
+                for name in path_option_names(get_reward_spec(self.reward).options_cls):
+                    if options.get(name) is not None:
+                        options[name] = remap_path(str(options[name]))
+            payload[REWARD_OPTIONS_KEY] = options
+        return payload
+
+
+def _as_mapping(value: Any, what: str, shape: str) -> Mapping[str, Any]:
+    """Return ``value`` if it is a mapping, else raise naming what should have been one."""
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{what} must be a mapping {shape}, got {type(value)}.")
+    return value
 
 
 @dataclass(frozen=True)
@@ -162,44 +248,10 @@ class RewardConfig:
         Raises
         ------
         ValueError
-            If a reward name is unknown, an entry is not a mapping, or an entry
-            holds keys other than ``weight`` and ``reward_options``.
+            If an entry is malformed (see :meth:`RewardEntry.from_mapping`) or
+            its options do not fit the reward (see :meth:`RewardEntry.validated`).
         """
-        entries = []
-        for name, raw_entry in data.items():
-            reward = get_reward_spec(name).name
-            entry = {} if raw_entry is None else raw_entry
-            if not isinstance(entry, Mapping):
-                raise ValueError(
-                    f"Configuration for reward '{reward.value}' must be a mapping with "
-                    f"'{WEIGHT_KEY}' and/or '{REWARD_OPTIONS_KEY}' keys, got "
-                    f"{type(entry).__name__}."
-                )
-
-            unexpected = sorted(set(entry) - {WEIGHT_KEY, REWARD_OPTIONS_KEY})
-            if unexpected:
-                raise ValueError(
-                    f"Unexpected key(s) {unexpected} in the configuration for reward "
-                    f"'{reward.value}'. Reward options belong under '{REWARD_OPTIONS_KEY}'."
-                )
-
-            raw_options = entry.get(REWARD_OPTIONS_KEY) or {}
-            if not isinstance(raw_options, Mapping):
-                raise ValueError(
-                    f"'{REWARD_OPTIONS_KEY}' for reward '{reward.value}' must be a mapping of "
-                    f"option name to value, got {type(raw_options).__name__}."
-                )
-
-            weight = entry.get(WEIGHT_KEY)
-            entries.append(
-                RewardEntry(
-                    reward=reward,
-                    weight=None if weight is None else float(weight),
-                    options=dict(raw_options),
-                )
-            )
-
-        return cls(tuple(entries))
+        return cls(tuple(RewardEntry.from_mapping(name, entry) for name, entry in data.items()))
 
     @classmethod
     def from_file(cls, path: str | Path) -> RewardConfig:
@@ -246,35 +298,35 @@ class RewardConfig:
                 f"Supported formats: {supported}."
             )
 
-        if not isinstance(data, Mapping):
-            raise ValueError(
-                f"Reward configuration in {path} must be a mapping of reward name to "
-                f"{{{WEIGHT_KEY}, {REWARD_OPTIONS_KEY}}}, got {type(data).__name__}."
+        return cls.from_mapping(
+            _as_mapping(
+                data,
+                f"Reward configuration in {path}",
+                f"of reward name to {{{WEIGHT_KEY}, {REWARD_OPTIONS_KEY}}}",
             )
+        )
 
-        return cls.from_mapping(data)
-
-    def to_mapping(self) -> dict[str, Any]:
+    def to_mapping(self, remap_path: Callable[[str], str] | None = None) -> dict[str, Any]:
         """Return the configuration as the plain mapping it was parsed from.
 
         Round-trips through :meth:`from_mapping`. Values are primitives only, so
         the result is safe to JSON-encode and to pickle across sampleworks
         versions.
 
+        Parameters
+        ----------
+        remap_path
+            If given, every path-valued option (those declared with ``path=True``)
+            is passed through it first. Run metadata uses this with the same
+            container-to-host remapping every other recorded path goes through,
+            so a run executed in a container records host paths.
+
         Returns
         -------
         dict[str, Any]
             Mapping keyed by reward name.
         """
-        mapping: dict[str, Any] = {}
-        for entry in self.entries:
-            payload: dict[str, Any] = {}
-            if entry.weight is not None:
-                payload[WEIGHT_KEY] = entry.weight
-            if entry.options:
-                payload[REWARD_OPTIONS_KEY] = dict(entry.options)
-            mapping[entry.reward.value] = payload
-        return mapping
+        return {entry.reward.value: entry.to_mapping(remap_path) for entry in self.entries}
 
     def with_effective_options(self) -> RewardConfig:
         """Return this configuration with every reward's defaults written out.
@@ -359,34 +411,10 @@ class RewardConfig:
             raise ValueError("Reward weights are all zero; at least one must be positive.")
         return tuple(weight / total for weight in weights)
 
-    def remapped_paths(self, remap: Any) -> dict[str, Any]:
-        """Return :meth:`to_mapping` with path-valued options passed through ``remap``.
 
-        Used when writing run metadata, so a run executed in a container records
-        host paths like every other path in the configuration.
-
-        Parameters
-        ----------
-        remap
-            Callable taking a path string and returning the path to record.
-
-        Returns
-        -------
-        dict[str, Any]
-            The configuration mapping, with path options remapped.
-        """
-        mapping = self.to_mapping()
-        for entry in self.entries:
-            options = mapping[entry.reward.value].get(REWARD_OPTIONS_KEY)
-            if not options:
-                continue
-            for option_name in path_option_names(get_reward_spec(entry.reward).options_cls):
-                if options.get(option_name) is not None:
-                    options[option_name] = remap(str(options[option_name]))
-        return mapping
-
-
-def build_reward(config: RewardConfig, context: RewardBuildContext) -> RewardFunctionProtocol:
+def build_reward(
+    config: RewardConfig, *, device: torch.device | str = "cpu"
+) -> RewardFunctionProtocol:
     """Build the reward function a run scores against.
 
     One configured reward is built and returned directly -- its normalized weight
@@ -399,8 +427,10 @@ def build_reward(config: RewardConfig, context: RewardBuildContext) -> RewardFun
     ----------
     config
         The run's reward configuration.
-    context
-        Run-level inputs (the parsed input structure, the device).
+    device
+        Torch device the rewards run on. Nothing else is needed at build time:
+        a reward that depends on the model topology binds to it later, in
+        :meth:`~sampleworks.core.rewards.protocol.PreparableRewardFunctionProtocol.prepare`.
 
     Returns
     -------
@@ -409,7 +439,7 @@ def build_reward(config: RewardConfig, context: RewardBuildContext) -> RewardFun
     """
     weights = config.resolved_weights()
     rewards = [
-        build_single_reward(entry.reward, entry.options, context) for entry in config.entries
+        build_single_reward(entry.reward, entry.options, device=device) for entry in config.entries
     ]
 
     if len(rewards) == 1:

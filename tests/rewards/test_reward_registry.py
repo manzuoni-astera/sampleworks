@@ -3,18 +3,13 @@
 import dataclasses
 
 import pytest
-from sampleworks.core.rewards.options import (
-    option_type,
-    path_option_names,
-    RealSpaceDensityOptions,
-)
+from sampleworks.core.rewards.options import path_option_names, RealSpaceDensityOptions
 from sampleworks.core.rewards.registry import (
     build_single_reward,
     coerce_options,
     get_reward_spec,
     REWARD_SPECS,
     reward_type_names,
-    RewardBuildContext,
 )
 from sampleworks.utils.guidance_constants import Rewards
 
@@ -78,43 +73,17 @@ def test_coerce_options_materializes_defaults_for_absent_options():
     assert options == RealSpaceDensityOptions(resolution=1.8, loss_order=2, em=False)
 
 
-def test_option_type_strips_optionality():
-    assert option_type(RealSpaceDensityOptions, "resolution") is float
-    assert option_type(RealSpaceDensityOptions, "loss_order") is int
-    assert option_type(RealSpaceDensityOptions, "em") is bool
-
-
-def test_option_type_keeps_a_generic_whole():
-    """Collapsing list[str] to str would silently drop nargs from its CLI flag."""
-
-    @dataclasses.dataclass(frozen=True)
-    class Options:
-        required_columns: list[str] = dataclasses.field(default_factory=list)
-        optional_columns: list[str] | None = None
-
-    assert option_type(Options, "required_columns") == list[str]
-    assert option_type(Options, "optional_columns") == list[str]
-
-
 class TestBuilderValidation:
     """Missing required inputs are the reward's own error to raise."""
 
     def test_density_reward_requires_a_map(self):
         with pytest.raises(ValueError, match="needs a density map"):
-            build_single_reward(
-                Rewards.REAL_SPACE_DENSITY,
-                {"resolution": 1.8},
-                RewardBuildContext(structure={}),
-            )
+            build_single_reward(Rewards.REAL_SPACE_DENSITY, {"resolution": 1.8})
 
     def test_density_reward_requires_a_resolution(self):
         with pytest.raises(ValueError, match="needs a map resolution"):
-            build_single_reward(
-                Rewards.REAL_SPACE_DENSITY,
-                {"density": "map.ccp4"},
-                RewardBuildContext(structure={}),
-            )
+            build_single_reward(Rewards.REAL_SPACE_DENSITY, {"density": "map.ccp4"})
 
     def test_structure_factor_reward_requires_an_mtz(self):
         with pytest.raises(ValueError, match="needs a target MTZ"):
-            build_single_reward(Rewards.STRUCTURE_FACTOR, {}, RewardBuildContext(structure={}))
+            build_single_reward(Rewards.STRUCTURE_FACTOR, {})

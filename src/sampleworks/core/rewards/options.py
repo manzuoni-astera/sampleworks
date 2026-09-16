@@ -22,8 +22,6 @@ actually built.
 from __future__ import annotations
 
 import dataclasses
-import types
-import typing
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -109,34 +107,6 @@ class StructureFactorOptions:
         help="Extra SFcalculator keyword arguments as JSON, e.g. '{\"n_bins\": 15}'",
         json_arg=True,
     )
-
-
-def option_type(options_cls: type, name: str) -> Any:
-    """Return the declared type of one option, with ``None`` stripped from unions.
-
-    ``str | None`` is reported as ``str``: optionality is expressed by the default,
-    while consumers (argparse, config coercion) need the underlying value type.
-    Non-union hints are returned whole, so ``list[str]`` stays ``list[str]`` rather
-    than collapsing to its element type.
-
-    Parameters
-    ----------
-    options_cls
-        A reward's option dataclass.
-    name
-        Option name.
-
-    Returns
-    -------
-    Any
-        The option's value type, e.g. ``float``, ``bool``, ``list[str]``.
-    """
-    hint = typing.get_type_hints(options_cls)[name]
-    if typing.get_origin(hint) not in (types.UnionType, typing.Union):
-        return hint
-
-    args = [arg for arg in typing.get_args(hint) if arg is not type(None)]
-    return args[0] if len(args) == 1 else hint
 
 
 def path_option_names(options_cls: type) -> tuple[str, ...]:

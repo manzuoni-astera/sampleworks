@@ -5,7 +5,6 @@ import torch
 from sampleworks.core.rewards.composite import CompositeReward
 from sampleworks.core.rewards.config import build_reward, RewardConfig
 from sampleworks.core.rewards.protocol import RewardFunctionProtocol, RewardInputs
-from sampleworks.core.rewards.registry import RewardBuildContext
 from sampleworks.utils.guidance_constants import Rewards
 
 from tests.mocks import MockGradientRewardFunction, MockPreparableRewardFunction
@@ -97,11 +96,11 @@ class TestBuildReward:
     def test_a_single_reward_is_not_wrapped_whatever_its_weight(self, monkeypatch):
         monkeypatch.setattr(
             "sampleworks.core.rewards.config.build_single_reward",
-            lambda reward, options, context: MockGradientRewardFunction(),
+            lambda reward, options, device: MockGradientRewardFunction(),
         )
         config = RewardConfig.from_mapping({"real_space_density": {"weight": 0.3}})
 
-        reward = build_reward(config, RewardBuildContext(structure={}))
+        reward = build_reward(config)
 
         assert isinstance(reward, MockGradientRewardFunction)
 
@@ -109,13 +108,13 @@ class TestBuildReward:
         scales = {Rewards.REAL_SPACE_DENSITY: 1.0, Rewards.STRUCTURE_FACTOR: 3.0}
         monkeypatch.setattr(
             "sampleworks.core.rewards.config.build_single_reward",
-            lambda reward, options, context: MockGradientRewardFunction(scales[reward]),
+            lambda reward, options, device: MockGradientRewardFunction(scales[reward]),
         )
         config = RewardConfig.from_mapping(
             {"real_space_density": {"weight": 1.0}, "structure_factor": {"weight": 3.0}}
         )
 
-        reward = build_reward(config, RewardBuildContext(structure={}))
+        reward = build_reward(config)
 
         assert isinstance(reward, CompositeReward)
         assert reward.weights == [0.25, 0.75]
