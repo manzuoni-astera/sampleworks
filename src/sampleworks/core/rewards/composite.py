@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import torch
 from jaxtyping import Float, Int
-from sampleworks.core.rewards.protocol import (
-    prepare_reward_if_needed,
-    RewardFunctionProtocol,
-    RewardInputs,
-)
+from sampleworks.core.rewards.protocol import prepare_reward_if_needed, RewardFunctionProtocol
+
+
+if TYPE_CHECKING:
+    from sampleworks.core.rewards.protocol import RewardInputs
 
 
 class CompositeReward:
@@ -122,8 +123,7 @@ class CompositeReward:
         Parameters
         ----------
         reward_inputs
-            Inputs this composite's ``__call__`` will be fed; forwarded unchanged to
-            every term that implements ``PreparableRewardFunctionProtocol``.
+            Model-order reward inputs every component's ``__call__`` will be fed.
         device
             PyTorch device the prepared state is placed on.
         """

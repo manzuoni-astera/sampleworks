@@ -32,6 +32,23 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class RewardBuildContext:
+    """Run-level inputs a reward builder may need that are not reward options.
+
+    Attributes
+    ----------
+    structure
+        Atomworks-parsed structure dictionary for the input structure, loaded once
+        by the caller and shared by every reward in a run.
+    device
+        Torch device the reward runs on.
+    """
+
+    structure: dict
+    device: torch.device | str = "cpu"
+
+
+@dataclass(frozen=True)
 class RewardSpec:
     """Everything the framework needs to know about a reward without importing it.
 
@@ -46,27 +63,34 @@ class RewardSpec:
         ``"module:function"`` address of the builder, resolved lazily.
     description
         One-line summary, shown in ``--help``.
+    data_path_option
+        Name of the option holding the experimental data file, if any. Lets
+        callers that resolve data per protein (grid search) inject it without
+        knowing which reward they are configuring.
+    resolution_option
+        Name of the option holding the resolution, if any. Same rationale.
     required_options
-        Options the reward cannot be built without. Lets a configuration be
-        refused up front, before a model is loaded; the builder raises its own
-        error for the same inputs when it runs.
+        Options this reward cannot be built without. The builder raises on them
+        too -- that is the guarantee for library callers -- but declaring them
+        here lets the CLI report a missing one as a usage error, before a model
+        is loaded.
     """
 
     name: Rewards
     options_cls: type
     builder_path: str
     description: str
+    data_path_option: str | None = None
+    resolution_option: str | None = None
     required_options: tuple[str, ...] = ()
 
-    def builder(self) -> Callable[..., RewardFunctionProtocol]:
+    def builder(self) -> Callable[[Any, RewardBuildContext], RewardFunctionProtocol]:
         """Import and return this reward's builder function.
 
         Returns
         -------
         Callable
-            Builder taking ``(options, *, device)`` and returning a reward function.
-            Anything a reward needs from the model topology arrives later, in
-            :meth:`~sampleworks.core.rewards.protocol.PreparableRewardFunctionProtocol.prepare`.
+            Builder taking ``(options, context)`` and returning a reward function.
         """
         module_path, function_name = self.builder_path.split(":")
         return getattr(importlib.import_module(module_path), function_name)
@@ -78,6 +102,8 @@ REWARD_SPECS: dict[Rewards, RewardSpec] = {
         options_cls=RealSpaceDensityOptions,
         builder_path="sampleworks.core.rewards.real_space_density:build_real_space_density_reward",
         description="Real-space density fit (X-ray or cryo-EM map).",
+        data_path_option="density",
+        resolution_option="resolution",
         required_options=("density", "resolution"),
     ),
     Rewards.STRUCTURE_FACTOR: RewardSpec(
@@ -85,6 +111,9 @@ REWARD_SPECS: dict[Rewards, RewardSpec] = {
         options_cls=StructureFactorOptions,
         builder_path="sampleworks.core.rewards.structure_factor:build_structure_factor_reward",
         description="Reciprocal-space structure-factor amplitude fit (MTZ target).",
+        data_path_option="mtzfile",
+        resolution_option="resolution",
+        # No resolution: the MTZ carries its own, and --resolution only truncates it.
         required_options=("mtzfile",),
     ),
 }
@@ -161,8 +190,7 @@ def coerce_options(spec: RewardSpec, raw: Mapping[str, Any]) -> Any:
 def build_single_reward(
     reward: Rewards | str,
     options: Mapping[str, Any],
-    *,
-    device: torch.device | str = "cpu",
+    context: RewardBuildContext,
 ) -> RewardFunctionProtocol:
     """Build one reward from its option mapping.
 
@@ -172,8 +200,8 @@ def build_single_reward(
         Reward type to build.
     options
         Option values for that reward; missing options take their defaults.
-    device
-        Torch device the reward runs on.
+    context
+        Run-level inputs (parsed structure, device).
 
     Returns
     -------
@@ -181,4 +209,4 @@ def build_single_reward(
         The constructed reward function.
     """
     spec = get_reward_spec(reward)
-    return spec.builder()(coerce_options(spec, options), device=device)
+    return spec.builder()(coerce_options(spec, options), context)

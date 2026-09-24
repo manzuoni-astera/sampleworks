@@ -18,6 +18,7 @@ from sampleworks.core.forward_models.xray.real_space_density_deps.qfit.volume im
     XMap,
 )
 from sampleworks.core.rewards.options import RealSpaceDensityOptions
+from sampleworks.core.rewards.registry import RewardBuildContext
 from sampleworks.utils.elements import elements_to_scattering_indices
 from sampleworks.utils.torch_utils import try_gpu
 
@@ -189,7 +190,7 @@ class RealSpaceRewardFunction:
         self,
         xmap: XMap,
         scattering_params: torch.Tensor,
-        selection: ArrayLike | torch.Tensor | None = None,
+        selection: ArrayLike | torch.Tensor,
         em: bool = False,
         loss_order: int = 2,
         device: torch.device | None = None,
@@ -212,10 +213,11 @@ class RealSpaceRewardFunction:
         )
 
         # TODO: selection doesn't do anything right now
-        if selection is None or torch.is_tensor(selection):
-            self.selection = selection
-        else:
-            self.selection = torch.tensor(selection).to(device=device, dtype=torch.bool)
+        self.selection = (
+            selection
+            if torch.is_tensor(selection)
+            else torch.tensor(selection).to(device=device, dtype=torch.bool)
+        )
         self.device = device
         if loss_order == 1:
             self.loss = torch.nn.L1Loss()
@@ -313,7 +315,7 @@ class RealSpaceRewardFunction:
 
 
 def build_real_space_density_reward(
-    options: RealSpaceDensityOptions, *, device: torch.device | str = "cpu"
+    options: RealSpaceDensityOptions, context: RewardBuildContext
 ) -> RealSpaceRewardFunction:
     """Build the real-space density reward from its configured options.
 
@@ -322,8 +324,8 @@ def build_real_space_density_reward(
     options
         Density reward options: map path, resolution, loss order, and whether to
         use electron scattering factors.
-    device
-        Torch device the reward runs on.
+    context
+        Run-level inputs; the parsed input structure and the target device.
 
     Returns
     -------
@@ -346,17 +348,22 @@ def build_real_space_density_reward(
             "set reward_options.resolution in a --reward-config file."
         )
 
-    device = torch.device(device)
+    device = torch.device(context.device) if isinstance(context.device, str) else context.device
 
     logger.debug(f"Loading density map from {options.density}")
     xmap = XMap.fromfile(options.density, resolution=options.resolution)
 
     logger.debug("Setting up scattering parameters")
+    atom_array = context.structure["asym_unit"]
     scattering_params = setup_scattering_params(em_mode=options.em, device=device)
+
+    selection_mask = atom_array.occupancy > 0
+    logger.info(f"Selected {selection_mask.sum()} atoms with occupancy > 0")
 
     return RealSpaceRewardFunction(
         xmap,
         scattering_params,
+        selection_mask,
         em=options.em,
         loss_order=options.loss_order,
         device=device,
