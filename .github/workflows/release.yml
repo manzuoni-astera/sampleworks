@@ -124,8 +124,11 @@ jobs:
         run: |
           # --strict makes "nothing to release" exit 2 instead of 0, so it can
           # be told apart from a real failure (exit 1).
+          # GITHUB_OUTPUT is unset for every semantic-release call in this job:
+          # with it set, semantic-release writes its own Actions outputs and
+          # fails on the missing commit_sha that only tagging would have set.
           set +e
-          out="$(uvx --from="${PSR}" semantic-release --strict version --print)"
+          out="$(env -u GITHUB_OUTPUT uvx --from="${PSR}" semantic-release --strict version --print)"
           rc=$?
           set -e
           version="$(printf '%s\n' "${out}" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' | tail -n1)"
@@ -152,7 +155,7 @@ jobs:
           git config user.name "${BOT_NAME}"
           git config user.email "${BOT_EMAIL}"
           # Bumps pyproject.toml and CHANGELOG.md, runs `pixi lock`, commits locally.
-          uvx --from="${PSR}" semantic-release --strict version --no-tag --no-push --no-vcs-release
+          env -u GITHUB_OUTPUT uvx --from="${PSR}" semantic-release --strict version --no-tag --no-push --no-vcs-release
           subject="$(git log -1 --format=%s)"
           if [ "${subject}" != "chore(release): ${NEXT}" ]; then
             echo "::error::expected release commit 'chore(release): ${NEXT}', got '${subject}'"
@@ -167,7 +170,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           NEXT: ${{ steps.next.outputs.next_version }}
         run: |
-          last_tag="$(uvx --from="${PSR}" semantic-release version --print-last-released-tag | grep -E '^v[0-9]' | tail -n1)"
+          last_tag="$(env -u GITHUB_OUTPUT uvx --from="${PSR}" semantic-release version --print-last-released-tag | grep -E '^v[0-9]' | tail -n1)"
           git push --force origin "HEAD:refs/heads/${RELEASE_BRANCH}"
 
           title="chore(release): ${NEXT}"
