@@ -55,11 +55,22 @@ pixi run -e bioemu2 sampleworks-guidance --model bioemu2 --guidance-type pure_gu
 | `--msa-path` | ColabFold | A3M file or JSON `{chain_id: a3m}` |
 | `--bioemu2-no-msa-server` | off | Single-sequence MSA when no `--msa-path` (offline) |
 | `--bioemu2-exclude-ligands` | off | Do not model non-polymer chains |
+| `--bioemu2-native-steering` | off | With `fk_steering`: BioEmu2's own FKC sampler (baseline, below) |
+| `--bioemu2-steering-weights` | `smc` | FKC weights for the baseline: `smc` or `guidance` |
 
 `BIOEMU2_MSA_CACHE` and `BIOEMU2_EMBEDS_CACHE` (BioEmu2's own caches) apply as documented upstream.
 The checkpoint resolves from `--model-checkpoint`, `BIOEMU2_CHECKPOINT`,
 `/checkpoints/bioemu2-preview/checkpoint.ckpt`, then
 `/mnt/diffuse-shared/raw/checkpoints/bioemu2-preview/checkpoint.ckpt`.
+
+## Native-steering baseline
+
+`--guidance-type fk_steering --bioemu2-native-steering` replaces `AF3EDMSampler` and `FKSteering`
+with BioEmu2's `edm_fkc_sampler` (`models/bioemu2/steering.py`). The sampleworks loss becomes a
+BioEmu2 `Potential` (`SampleworksLossPotential`): each particle's denoised coordinates are aligned
+to the input and scored as one structure, times `--fk-lambda`. `ensemble_size * num_particles`
+particles are resampled within `ensemble_size` groups, and the lowest-loss particle of each group
+becomes one ensemble member. An ensemble-level loss is therefore seen one member at a time.
 
 ## Environment
 
@@ -95,5 +106,4 @@ checkpoint on a GPU.
 ## Not done yet
 
 - Bake the checkpoint into the checkpoints image used by `Dockerfile` (`CHECKPOINTS_IMAGE`).
-- Baseline: BioEmu2's own FK/FKC steering on a sampleworks loss, through a `Potential` bridge.
 - Disulfide `Bond`s and contact conditioning are not passed to BioEmu2.

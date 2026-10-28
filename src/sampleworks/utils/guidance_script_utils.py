@@ -851,14 +851,25 @@ def _run_guidance(args: GuidanceConfig, guidance_type: str, model_wrapper, devic
         pd = args.partial_diffusion_step
         t_start = pd / num_steps if pd else 0.0
 
-        guidance = FKSteering(
-            ensemble_size=args.ensemble_size,
-            num_steps=num_steps,
-            resampling_interval=args.fk_resampling_interval,
-            fk_lambda=args.fk_lambda,
-            guidance_t_start=guidance_start_fraction,
-            t_start=t_start,
-        )
+        if is_bioemu2 and getattr(args, "bioemu2_native_steering", False):
+            from sampleworks.models.bioemu2.steering import BioEmu2NativeSteering
+
+            # Baseline: BioEmu2's own sampler and FKC weights instead of AF3EDMSampler.
+            guidance = BioEmu2NativeSteering(
+                ensemble_size=args.ensemble_size,
+                num_steps=num_steps,
+                loss_scale=args.fk_lambda,
+                weight_update=getattr(args, "bioemu2_steering_weights", None) or "smc",
+            )
+        else:
+            guidance = FKSteering(
+                ensemble_size=args.ensemble_size,
+                num_steps=num_steps,
+                resampling_interval=args.fk_resampling_interval,
+                fk_lambda=args.fk_lambda,
+                guidance_t_start=guidance_start_fraction,
+                t_start=t_start,
+            )
 
         logger.info("Running FK steering")
         result = guidance.sample(

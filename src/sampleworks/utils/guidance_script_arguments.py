@@ -238,6 +238,8 @@ _DYNAMIC_ATTRS = [
     "bioemu2_mode",
     "bioemu2_no_msa_server",
     "bioemu2_exclude_ligands",
+    "bioemu2_native_steering",
+    "bioemu2_steering_weights",
     # generic (overridable)
     "ensemble_size",
     "recycling_steps",
@@ -945,6 +947,21 @@ def add_bioemu2_specific_args(parser: argparse.ArgumentParser | GuidanceConfig):
         "--bioemu2-exclude-ligands",
         action="store_true",
         help="Do not model non-polymer chains as CCD ligands",
+    )
+    parser.add_argument(
+        "--bioemu2-native-steering",
+        action="store_true",
+        help=(
+            "With --guidance-type fk_steering, sample with BioEmu2's own FKC sampler, using the "
+            "loss times --fk-lambda as the steering energy (baseline)"
+        ),
+    )
+    parser.add_argument(
+        "--bioemu2-steering-weights",
+        type=str,
+        default="smc",
+        choices=["smc", "guidance"],
+        help="FKC weights for --bioemu2-native-steering: smc (reweight only) or guidance",
     )
 
 

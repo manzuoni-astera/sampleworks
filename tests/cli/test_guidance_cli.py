@@ -113,6 +113,21 @@ class TestFromCliUnified:
         config = GuidanceConfig.from_cli(argv)
         assert getattr(config, "bioemu2_mode") == "equilibrium"
         assert not getattr(config, "bioemu2_no_msa_server")
+        assert not getattr(config, "bioemu2_native_steering")
+
+    def test_bioemu2_native_steering_args(self):
+        argv = [
+            "--model",
+            "bioemu2",
+            "--guidance-type",
+            "fk_steering",
+            "--bioemu2-native-steering",
+            "--bioemu2-steering-weights",
+            "guidance",
+        ] + COMMON_ARGS
+        config = GuidanceConfig.from_cli(argv)
+        assert getattr(config, "bioemu2_native_steering") is True
+        assert getattr(config, "bioemu2_steering_weights") == "guidance"
 
     def test_guidance_specific_args_fk(self):
         argv = [
